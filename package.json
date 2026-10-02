@@ -1,0 +1,32 @@
+{
+  "name": "alltrace",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "wrangler dev --ip 127.0.0.1 --port 8787",
+    "start": "npm run build && npm run preview",
+    "test": "node --test tests/*.test.js",
+    "check": "tsc --noEmit",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@fontsource-variable/nunito-sans": "^5.3.0",
+    "@phosphor-icons/react": "^2.1.10",
+    "cheerio": "^1.2.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "prettier": "^3.9.9",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "wrangler": "^4.140.0"
+  }
+}

@@ -1,0 +1,4 @@
+# 复制为 .dev.vars，仅供本地开发。不要提交真实密钥。
+SAUCENAO_API_KEY=
+# trace.moe 可匿名使用，此项按需配置。
+TRACE_API_KEY=
