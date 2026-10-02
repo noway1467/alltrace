@@ -328,11 +328,7 @@ export function useSearch() {
           popup?.close();
           return;
         }
-        // Bot 酱没有图片链接入口，只打开原站，不伪造已经提交图片的结果。
-        searchUrl =
-          id === 'soutubot'
-            ? engines.find((engine) => engine.id === id)!.url
-            : imageSearchUrl(id, imageUrl);
+        searchUrl = imageSearchUrl(id, imageUrl);
         if (!searchUrl) throw new Error('无法生成带图片的检索链接。');
         if (!openAutomatically) {
           setState({
@@ -351,10 +347,7 @@ export function useSearch() {
         setState({
           status: 'attention',
           results: [],
-          note:
-            id === 'soutubot'
-              ? '已打开搜图 Bot 酱原站；该引擎仅接受文件，请在原站手动上传图片。'
-              : '已在浏览器新标签页检索，结果仅在原站显示。',
+          note: '已在浏览器新标签页检索，结果仅在原站显示。',
           searchUrl,
         });
         return;

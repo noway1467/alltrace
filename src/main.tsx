@@ -316,10 +316,10 @@ function App() {
                     需要公开可访问的 HTTPS 图片直链，
                     <br />
                     不支持网页链接或需要登录的图片。
-                    {browserEnabled && selected.includes('soutubot') && (
+                    {selected.includes('soutubot') && (
                       <>
                         <br />
-                        搜图 Bot 酱仅支持文件，将打开原站，请手动上传。
+                        搜图 Bot 酱会由 Worker 取回图片链接后提交。
                       </>
                     )}
                   </p>

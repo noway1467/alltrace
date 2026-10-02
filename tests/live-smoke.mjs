@@ -7,7 +7,7 @@ assert.ok(imageResponse.ok, '测试图片下载成功');
 const image = await imageResponse.blob();
 const outcomes = [];
 for (const engine of ['trace', 'animetrace', 'saucenao', 'yandex', 'soutubot', 'google']) {
-  const modes = engine === 'soutubot' || engine === 'google' ? ['file'] : ['file', 'url'];
+  const modes = engine === 'google' ? ['file'] : ['file', 'url'];
   for (const mode of modes) {
     const form = new FormData();
     form.set('image', image, 'public-sample.jpg');

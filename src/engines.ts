@@ -121,7 +121,7 @@ export const engines = [
     category: 'art',
     color: 'pink',
     url: 'https://soutubot.moe/',
-    mode: '网页接口 · 仅文件',
+    mode: '网页接口 · 支持链接',
   },
 ] as const;
 export type Engine = (typeof engines)[number];
@@ -163,11 +163,7 @@ export function imageSearchUrl(id: EngineId, imageUrl: string) {
 export const browserEngines = new Set<EngineId>(['google', 'baidu', 'ascii2d', 'iqdb']);
 
 export function usesBrowserSearch(id: EngineId, inputMode: 'file' | 'url', sauceBrowser = false) {
-  return (
-    browserEngines.has(id) ||
-    (id === 'saucenao' && sauceBrowser) ||
-    (id === 'soutubot' && inputMode === 'url')
-  );
+  return browserEngines.has(id) || (id === 'saucenao' && sauceBrowser);
 }
 
 export function showsInResultGrid(

@@ -93,6 +93,47 @@ export function detectImage(bytes) {
   return '';
 }
 
+export async function downloadImage(value, fetcher, signal) {
+  let target = publicImageUrl(value);
+  for (let redirects = 0; redirects <= 3; redirects++) {
+    let response;
+    try {
+      response = await fetcher(target, {
+        method: 'GET',
+        headers: {
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        },
+        signal,
+        redirect: 'manual',
+      });
+    } catch (error) {
+      if (signal.aborted || error.name === 'TimeoutError' || error.name === 'AbortError')
+        throw new ApiError('图片链接下载超时，请稍后重试。', 504);
+      throw new ApiError('无法下载图片链接，请确认链接公开可访问。', 502);
+    }
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location');
+      await response.body?.cancel();
+      if (!location) throw new ApiError('图片链接返回了无效跳转。', 502);
+      try {
+        target = publicImageUrl(new URL(location, target).href);
+      } catch {
+        throw new ApiError('图片链接跳转到了不安全的地址。', 502);
+      }
+      continue;
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new ApiError(`图片链接暂时不可用（HTTP ${response.status}）。`, 502);
+    }
+    const bytes = await boundedBytes(response.body, MAX_IMAGE_BYTES);
+    const mime = detectImage(bytes);
+    if (!mime) throw new ApiError('图片链接没有返回支持的 JPG、PNG、WebP 或 GIF 图片。', 415);
+    return new Blob([bytes], { type: mime });
+  }
+  throw new ApiError('图片链接跳转次数过多。', 502);
+}
+
 export async function readInput(request) {
   const declaredSize = Number(request.headers.get('content-length'));
   if (declaredSize > MAX_BODY_BYTES) throw new ApiError('图片不能超过 8 MB。', 413);

@@ -157,18 +157,17 @@ function harness(t, options = {}) {
 }
 
 test('图片链接按能力分流，支持链接的内置引擎不受影响', () => {
-  for (const id of ['trace', 'animetrace', 'saucenao', 'yandex'])
+  for (const id of ['trace', 'animetrace', 'saucenao', 'yandex', 'soutubot'])
     assert.equal(usesBrowserSearch(id, 'url'), false, id);
-  for (const id of ['google', 'ascii2d', 'iqdb', 'baidu', 'soutubot'])
+  for (const id of ['google', 'ascii2d', 'iqdb', 'baidu'])
     assert.equal(usesBrowserSearch(id, 'url'), true, id);
-  assert.equal(usesBrowserSearch('soutubot', 'file'), false);
   assert.equal(usesBrowserSearch('saucenao', 'file', true), true);
 });
 
 test('浏览器方式在加载、完成和失败时均不显示内置卡片，切换偏好不改变旧结果', () => {
   for (const status of ['idle', 'loading', 'success', 'attention', 'error', 'skipped'])
     assert.equal(showsInResultGrid('soutubot', { status, mode: 'browser' }, false, 'file'), false);
-  assert.equal(showsInResultGrid('soutubot', { status: 'idle' }, false, 'url'), false);
+  assert.equal(showsInResultGrid('soutubot', { status: 'idle' }, false, 'url'), true);
   assert.equal(showsInResultGrid('saucenao', { status: 'success', mode: 'inline' }, true), true);
 });
 
@@ -180,7 +179,7 @@ test('外部搜索引擎默认关闭，仅勾选当前可用的内置引擎', (t
   assert.deepEqual(h.current.availableEngineIds, inline);
 });
 
-test('链接模式只对四个内置引擎发请求，外部引擎不再重复内置检索', async (t) => {
+test('链接模式对五个内置引擎发请求，外部引擎不再重复内置检索', async (t) => {
   const h = harness(t, { storage: new Map([['alltrace-browser-enabled', 'true']]) });
   h.urlSearch(engines.map((engine) => engine.id));
   await h.settle();
@@ -189,15 +188,20 @@ test('链接模式只对四个内置引擎发请求，外部引擎不再重复�
       .filter((call) => call.url.startsWith('/api/search/'))
       .map((call) => call.url)
       .sort(),
-    ['/api/search/animetrace', '/api/search/saucenao', '/api/search/trace', '/api/search/yandex'],
+    [
+      '/api/search/animetrace',
+      '/api/search/saucenao',
+      '/api/search/soutubot',
+      '/api/search/trace',
+      '/api/search/yandex',
+    ],
   );
-  assert.equal(h.popups.length, 5);
+  assert.equal(h.popups.length, 4);
   assert.equal(
     h.calls.some((call) => call.url === '/api/temp-image'),
     false,
   );
-  assert.equal(h.current.states.soutubot.searchUrl, 'https://soutubot.moe/');
-  assert.match(h.current.states.soutubot.note, /手动上传/);
+  assert.equal(h.current.states.soutubot.status, 'success');
   assert.equal(h.current.completed, 9);
   assert.equal(h.current.activeCount, 9);
   assert.ok(h.popups.every((popup) => popup.href && popup.opener === null));
@@ -276,7 +280,7 @@ test('总开关关闭时，普通勾选和全选都无法重新选上外部搜�
   assert.deepEqual(h.current.selected, []);
 });
 
-test('关闭总开关时，Bot 酱输入模式与 SauceNAO 外部偏好同步影响勾选', (t) => {
+test('关闭总开关时 Bot 酱链接模式仍走内置检索，SauceNAO 外部偏好受限', (t) => {
   const h = harness(t, { storage: new Map([['alltrace-browser-enabled', 'true']]) });
   h.current.setBrowserEnabled(false);
   h.render();
@@ -284,18 +288,18 @@ test('关闭总开关时，Bot 酱输入模式与 SauceNAO 外部偏好同步影
   assert.ok(h.current.selected.includes('saucenao'));
   h.current.setInputMode('url');
   h.render();
-  assert.equal(h.current.selected.includes('soutubot'), false);
-  assert.equal(h.current.availableEngineIds.includes('soutubot'), false);
+  assert.ok(h.current.selected.includes('soutubot'));
+  assert.ok(h.current.availableEngineIds.includes('soutubot'));
   h.current.setSauceBrowser(true);
   h.render();
-  assert.deepEqual(h.current.selected, ['trace', 'animetrace', 'yandex']);
+  assert.deepEqual(h.current.selected, ['trace', 'animetrace', 'yandex', 'soutubot']);
   assert.equal(h.current.availableEngineIds.includes('saucenao'), false);
   h.current.setInputMode('file');
   h.current.setSauceBrowser(false);
   h.render();
   assert.ok(h.current.availableEngineIds.includes('soutubot'));
   assert.ok(h.current.availableEngineIds.includes('saucenao'));
-  assert.deepEqual(h.current.selected, ['trace', 'animetrace', 'yandex']);
+  assert.deepEqual(h.current.selected, ['trace', 'animetrace', 'yandex', 'soutubot']);
 });
 
 test('读取旧存储时立即清除与关闭总开关冲突的勾选，保留 SauceNAO 独立偏好', (t) => {
@@ -319,11 +323,11 @@ test('同一批次切换输入、偏好和全选也不能重新引入外部勾�
   h.current.setSauceBrowser(true);
   h.current.setSelected(engines.map((engine) => engine.id));
   h.render();
-  assert.deepEqual(h.current.selected, ['trace', 'animetrace', 'yandex']);
+  assert.deepEqual(h.current.selected, ['trace', 'animetrace', 'yandex', 'soutubot']);
   assert.deepEqual(h.current.selected, h.current.availableEngineIds);
 });
 
-test('关闭总开关取消外部勾选且不请求，包括浏览器方式的 SauceNAO', async (t) => {
+test('关闭总开关只请求内置引擎，包括链接模式的 Bot 酱', async (t) => {
   const h = harness(t, { storage: new Map([['alltrace-browser-enabled', 'true']]) });
   h.current.setBrowserEnabled(false);
   h.current.setSauceBrowser(true);
@@ -336,18 +340,19 @@ test('关闭总开关取消外部勾选且不请求，包括浏览器方式的 S
       .filter((call) => call.url.startsWith('/api/search/'))
       .map((call) => call.url)
       .sort(),
-    ['/api/search/animetrace', '/api/search/trace', '/api/search/yandex'],
+    ['/api/search/animetrace', '/api/search/soutubot', '/api/search/trace', '/api/search/yandex'],
   );
   assert.equal(h.current.states.saucenao.status, 'skipped');
-  assert.equal(h.current.activeCount, 3);
-  assert.equal(h.current.completed, 3);
+  assert.equal(h.current.states.soutubot.status, 'success');
+  assert.equal(h.current.activeCount, 4);
+  assert.equal(h.current.completed, 4);
   assert.equal(h.storage.get('alltrace-browser-enabled'), 'false');
   assert.equal(h.storage.get('alltrace-sauce-browser'), 'true');
 });
 
 test('关闭总开关且仅选外部引擎时，不请求、不弹窗并明确提示', async (t) => {
   const h = harness(t, { storage: new Map([['alltrace-browser-enabled', 'false']]) });
-  h.urlSearch(['google', 'soutubot']);
+  h.urlSearch(['google', 'baidu']);
   await h.settle();
   assert.match(h.current.error, /总开关/);
   assert.equal(h.popups.length, 0);

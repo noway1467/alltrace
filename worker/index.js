@@ -201,7 +201,7 @@ export async function handleApi(request, env = {}, fetcher = fetch) {
           trace: 'API 直连',
           animetrace: '角色 API + 作品封面',
           saucenao: env.SAUCENAO_API_KEY?.trim() ? 'API 直连' : '匿名网页检索',
-          soutubot: '网页接口 · 仅文件',
+          soutubot: '网页接口 · 支持链接',
           yandex: '网页检索',
           google: '你的浏览器',
           ascii2d: '网页检索',

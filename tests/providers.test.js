@@ -106,17 +106,43 @@ test('Bot 酱提取 thumbnail_url / metadata / source，不伪造百分比', () 
   assert.match(result.scoreLabel, /25.4.*低置信度/);
   assert.equal(result.sensitive, true);
 });
-test('Bot URL 明确返回仅支持文件，不静默变成外链', async () => {
+test('Bot 酱链接模式先下载图片再按文件上传', async () => {
+  const calls = [];
+  const data = await searchBot(
+    { url: 'https://images.example.org/a.jpg' },
+    async (url, init) => {
+      calls.push({ url, init });
+      if (calls.length === 1)
+        return new Response(Uint8Array.from([255, 216, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0]), {
+          headers: { 'Content-Type': 'image/jpeg' },
+        });
+      return Response.json({ results: [], result_id: 'test-result' });
+    },
+    signal(),
+  );
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, 'https://images.example.org/a.jpg');
+  assert.equal(new URL(calls[1].url).hostname, 'soutubot.moe');
+  assert.ok(calls[1].init.body instanceof FormData);
+  const file = calls[1].init.body.get('file');
+  assert.ok(file instanceof Blob);
+  assert.equal(file.type, 'image/jpeg');
+  assert.equal(calls[1].init.body.get('factor'), '1.2');
+  assert.match(data.note, /取回图片链接/);
+});
+test('Bot 酱链接模式拒绝跳转到不安全地址', async () => {
   await assert.rejects(
     () =>
       searchBot(
         { url: 'https://images.example.org/a.jpg' },
-        () => {
-          throw Error('不应访问');
-        },
+        async () =>
+          new Response(null, {
+            status: 302,
+            headers: { location: 'https://127.0.0.1/private.jpg' },
+          }),
         signal(),
       ),
-    /只接受文件/,
+    /不安全的地址/,
   );
 });
 test('Yandex 文件真实转发到 ru 站点，302 后改为 GET 且不传图片', async () => {

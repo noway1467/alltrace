@@ -1,5 +1,12 @@
 import { load } from 'cheerio/slim';
-import { ApiError, boundedBytes, imageForm, safeLink, upstreamJson } from './http.js';
+import {
+  ApiError,
+  boundedBytes,
+  downloadImage,
+  imageForm,
+  safeLink,
+  upstreamJson,
+} from './http.js';
 import { googleResultUrl, googleSessionCookies } from './google-browser.js';
 
 const TEXT_LIMIT = 3 * 1024 * 1024;
@@ -998,9 +1005,9 @@ export function normalizeBot(data) {
 }
 
 export async function searchBot(input, fetcher, signal) {
-  if (!input.file)
-    throw new ApiError('搜图 Bot 酱接口只接受文件。请改用上传、拖拽或粘贴图片后搜索。', 422);
-  const form = imageForm(input);
+  const file = input.file || (input.url ? await downloadImage(input.url, fetcher, signal) : null);
+  if (!file) throw new ApiError('搜图 Bot 酱需要图片文件或公开的 HTTPS 图片链接。', 422);
+  const form = imageForm({ file });
   form.set('factor', '1.2');
   form.set('metadata_mode', 'display');
   form.set('top_k', '6');
@@ -1023,6 +1030,7 @@ export async function searchBot(input, fetcher, signal) {
         : '',
     note:
       '图库可能含成人内容，缩略图默认隐藏。特征分不是百分比，低分结果通常不准确。' +
+      (input.url ? ' 已由 Worker 取回图片链接后提交。' : '') +
       (data.partial ? ' 部分图库未完成搜索。' : ''),
   };
 }
