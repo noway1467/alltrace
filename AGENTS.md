@@ -68,7 +68,8 @@ $patch = @'
 + new
 *** End Patch
 '@ -join "`n"
-& 'C:\Users\32482\AppData\Local\OpenAI\Codex\bin\27d6a192e9c98618\codex.exe' --codex-run-as-apply-patch $patch
+$codexExe = (Get-ChildItem -LiteralPath "$env:LOCALAPPDATA\OpenAI\Codex\bin" -Filter 'codex.exe' -Recurse | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+& $codexExe --codex-run-as-apply-patch $patch
 ```
 
 - Codex 安装目录哈希可能变化；优先使用当前会话实际可用的 `codex.exe` 路径，不要假设旧路径永久有效。
