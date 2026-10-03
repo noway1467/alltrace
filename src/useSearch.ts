@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { prepareImage, type CropRect } from './imageCrop';
 import {
   engines,
   imageSearchUrl,
@@ -143,6 +144,11 @@ export function useSearch() {
     );
   }
   const [image, setImage] = useState<Extract<SearchInput, { file: File }> | null>(null);
+  const [croppedImage, setCroppedImage] = useState<Extract<SearchInput, { file: File }> | null>(
+    null,
+  );
+  const [crop, setCrop] = useState<CropRect | null>(null);
+  const sourceFile = useRef<File | null>(null);
   const [urlValue, setUrlValue] = useState('');
   const [states, setStates] = useState(initialStates);
   const [config, setConfig] = useState<Record<string, boolean>>({
@@ -197,6 +203,14 @@ export function useSearch() {
   );
   useEffect(
     () => () => {
+      if (croppedImage) URL.revokeObjectURL(croppedImage.preview);
+    },
+    [croppedImage],
+  );
+  useEffect(
+    () => () => {
+      imageGeneration.current += 1;
+      sourceFile.current = null;
       controllers.current.forEach((c) => c.abort());
     },
     [],
@@ -241,36 +255,14 @@ export function useSearch() {
     setError('');
     cancelSearch();
     try {
-      const bitmap = await createImageBitmap(file);
-      if (bitmap.width * bitmap.height > 40_000_000) {
-        bitmap.close();
-        throw new Error('图片分辨率过高，请先缩小至 4000 万像素以内。');
-      }
-      const originalWidth = bitmap.width,
-        originalHeight = bitmap.height;
-      const scale = Math.min(1, 2000 / Math.max(bitmap.width, bitmap.height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-      const context = canvas.getContext('2d');
-      if (!context) {
-        bitmap.close();
-        throw new Error('浏览器无法处理此图片，请换用较新的浏览器。');
-      }
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close();
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, 'image/jpeg', 0.9),
-      );
-      if (!blob) throw new Error('图片读取失败，请重新选择。');
+      const prepared = await prepareImage(file);
       if (token !== imageGeneration.current) return;
+      sourceFile.current = file;
+      setCroppedImage(null);
+      setCrop(null);
       setImage({
-        file: new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' }),
-        preview: URL.createObjectURL(blob),
-        width: originalWidth,
-        height: originalHeight,
+        ...prepared,
+        preview: URL.createObjectURL(prepared.file),
       });
       setInputMode('file');
     } catch (e) {
@@ -283,6 +275,38 @@ export function useSearch() {
     } finally {
       if (token === imageGeneration.current) setPreparing(false);
     }
+  }
+  async function applyCrop(rect: CropRect) {
+    if (!sourceFile.current || preparing) return false;
+    const token = ++imageGeneration.current;
+    setPreparing(true);
+    setError('');
+    cancelSearch();
+    try {
+      const prepared = await prepareImage(sourceFile.current, rect);
+      if (token !== imageGeneration.current) return false;
+      setCroppedImage({ ...prepared, preview: URL.createObjectURL(prepared.file) });
+      setCrop(rect);
+      return true;
+    } catch (e) {
+      if (token === imageGeneration.current)
+        setError(
+          e instanceof Error && !(e instanceof DOMException) && !(e instanceof TypeError)
+            ? e.message
+            : '裁剪失败，请重新选择区域或更换图片。',
+        );
+      return false;
+    } finally {
+      if (token === imageGeneration.current) setPreparing(false);
+    }
+  }
+  function restoreImage() {
+    imageGeneration.current += 1;
+    setPreparing(false);
+    cancelSearch();
+    setCroppedImage(null);
+    setCrop(null);
+    setError('');
   }
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
@@ -396,6 +420,7 @@ export function useSearch() {
     }
   }
   function beginSearch() {
+    if (preparing) return;
     setError('');
     if (!selected.length) {
       setError(
@@ -411,7 +436,7 @@ export function useSearch() {
         setError('先选择一张想要寻找出处的图片吧。');
         return;
       }
-      input = image;
+      input = croppedImage ?? image;
     } else {
       try {
         const url = new URL(urlValue.trim());
@@ -464,6 +489,9 @@ export function useSearch() {
     setPreparing(false);
     cancelSearch();
     setImage(null);
+    setCroppedImage(null);
+    setCrop(null);
+    sourceFile.current = null;
     setUrlValue('');
     setError('');
   }
@@ -480,7 +508,11 @@ export function useSearch() {
   return {
     inputMode,
     setInputMode,
-    image,
+    image: croppedImage ?? image,
+    originalImage: image,
+    crop,
+    applyCrop,
+    restoreImage,
     urlValue,
     setUrlValue,
     selected,

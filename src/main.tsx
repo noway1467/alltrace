@@ -6,6 +6,7 @@ import {
   CheckCircle,
   CircleNotch,
   Cloud,
+  Crop,
   FilmStrip,
   Flower,
   Heart,
@@ -26,6 +27,7 @@ import {
 import { engines, categories, showsInResultGrid, type Category } from './engines';
 import { EngineCard, EngineMark } from './EngineCard';
 import { useSearch } from './useSearch';
+import { ImageCropDialog } from './ImageCropDialog';
 import '@fontsource-variable/nunito-sans';
 import './styles.css';
 
@@ -35,6 +37,10 @@ function App() {
     inputMode,
     setInputMode,
     image,
+    originalImage,
+    crop,
+    applyCrop,
+    restoreImage,
     urlValue,
     setUrlValue,
     selected,
@@ -72,6 +78,7 @@ function App() {
   });
   const [category, setCategory] = useState<Category>('all');
   const [dragging, setDragging] = useState(false);
+  const [cropOpen, setCropOpen] = useState(false);
   const [dialog, setDialog] = useState<'about' | null>(null);
   const [showThumbnails, setShowThumbnails] = useState(() => {
     try {
@@ -82,6 +89,9 @@ function App() {
   });
   const fileInput = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    setCropOpen(false);
+  }, [originalImage, inputMode]);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
@@ -113,6 +123,17 @@ function App() {
   });
   return (
     <>
+      {cropOpen && originalImage && inputMode === 'file' && (
+        <ImageCropDialog
+          key={originalImage.preview}
+          image={originalImage}
+          initialCrop={crop}
+          preparing={preparing}
+          error={error}
+          onApply={applyCrop}
+          onClose={() => setCropOpen(false)}
+        />
+      )}
       <header className="site-header">
         <div className="header-inner">
           <a className="brand" href="/" aria-label="AllTrace 寻迹首页">
@@ -235,31 +256,51 @@ function App() {
               />
               {inputMode === 'file' ? (
                 image ? (
-                  <div
-                    className="selected-image"
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      void chooseFile(e.dataTransfer.files[0]);
-                    }}
-                  >
-                    <img src={image.preview} alt="待识别图片预览" />
-                    <div className="image-overlay">
-                      <button onClick={() => fileInput.current?.click()}>
-                        <ArrowClockwise size={14} />
-                        更换图片
-                      </button>
-                      <button onClick={clearImage} aria-label="移除图片">
-                        <Trash size={15} />
-                      </button>
+                  <>
+                    <div
+                      className="selected-image"
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        void chooseFile(e.dataTransfer.files[0]);
+                      }}
+                    >
+                      <img src={image.preview} alt={crop ? '待识别选区预览' : '待识别图片预览'} />
+                      <div className="image-overlay">
+                        <button onClick={() => fileInput.current?.click()}>
+                          <ArrowClockwise size={14} />
+                          更换图片
+                        </button>
+                        <button onClick={clearImage} aria-label="移除图片">
+                          <Trash size={15} />
+                        </button>
+                      </div>
+                      <div className="image-info">
+                        <span title={image.file.name}>{image.file.name}</span>
+                        <small>
+                          {image.width} × {image.height} · {(image.file.size / 1024).toFixed(0)} KB
+                        </small>
+                      </div>
                     </div>
-                    <div className="image-info">
-                      <span title={image.file.name}>{image.file.name}</span>
-                      <small>
-                        {image.width} × {image.height} · {(image.file.size / 1024).toFixed(0)} KB
-                      </small>
+                    <div className="image-crop-actions">
+                      <button
+                        disabled={preparing}
+                        onClick={() => {
+                          setError('');
+                          setCropOpen(true);
+                        }}
+                      >
+                        <Crop size={16} />
+                        {crop ? '调整选区' : '选区搜图'}
+                      </button>
+                      {crop && (
+                        <button disabled={preparing} onClick={restoreImage}>
+                          恢复整图
+                        </button>
+                      )}
                     </div>
-                  </div>
+                    {crop && <p className="crop-active-note">已选取局部 · 搜索时仅发送当前选区</p>}
+                  </>
                 ) : (
                   <button
                     className={'dropzone ' + (dragging ? 'dragging' : '')}
@@ -464,7 +505,13 @@ function App() {
                 ) : (
                   <>
                     <MagnifyingGlass size={19} weight="bold" />
-                    {configStatus === 'loading' ? '正在连接服务…' : '开始寻迹'}
+                    {preparing
+                      ? '正在整理图片…'
+                      : configStatus === 'loading'
+                        ? '正在连接服务…'
+                        : crop && inputMode === 'file'
+                          ? '搜索选区'
+                          : '开始寻迹'}
                   </>
                 )}
               </button>

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { setImmediate } from 'node:timers/promises';
 import { engines, showsInResultGrid, usesBrowserSearch } from '../src/engines.ts';
+import { cropPixels, prepareImage } from '../src/imageCrop.ts';
 
 // 仅替换 Hook 的宿主和浏览器边界，实际请求编排执行 src/useSearch.ts，避免消耗上游额度。
 const searchModule = new URL('../src/useSearch.ts', import.meta.url).href;
@@ -22,6 +23,8 @@ const loader = registerHooks({
       return { url: hookModule, shortCircuit: true };
     if (context.parentURL === searchModule && specifier === './engines')
       return { url: new URL('../src/engines.ts', import.meta.url).href, shortCircuit: true };
+    if (context.parentURL === searchModule && specifier === './imageCrop')
+      return { url: new URL('../src/imageCrop.ts', import.meta.url).href, shortCircuit: true };
     return nextResolve(specifier, context);
   },
 });
@@ -31,6 +34,8 @@ loader.deregister();
 function harness(t, options = {}) {
   const storage = options.storage || new Map();
   const calls = [],
+    draws = [],
+    bitmaps = [],
     popups = [],
     cells = [];
   let cursor = 0,
@@ -99,12 +104,33 @@ function harness(t, options = {}) {
       removeEventListener() {},
       createElement() {
         return {
-          getContext: () => ({ fillRect() {}, drawImage() {} }),
-          toBlob: (callback) => callback(new Blob(['test image'], { type: 'image/jpeg' })),
+          getContext: () =>
+            options.contextFails
+              ? null
+              : {
+                  fillRect() {},
+                  drawImage(...args) {
+                    draws.push(args);
+                  },
+                },
+          toBlob: (callback) =>
+            callback(options.blobFails ? null : new Blob(['test image'], { type: 'image/jpeg' })),
         };
       },
     },
-    createImageBitmap: async () => ({ width: 10, height: 10, close() {} }),
+    createImageBitmap: async (file) => {
+      if (options.decode) return options.decode(file);
+      const bitmap = {
+        width: options.width ?? 10,
+        height: options.height ?? 10,
+        closed: false,
+        close() {
+          this.closed = true;
+        },
+      };
+      bitmaps.push(bitmap);
+      return bitmap;
+    },
     fetch: async (url, init) => {
       calls.push({ url, init });
       if (url === '/api/config') return Response.json({ engines: { trace: true }, modes: {} });
@@ -138,6 +164,8 @@ function harness(t, options = {}) {
   return {
     storage,
     calls,
+    draws,
+    bitmaps,
     popups,
     render,
     get current() {
@@ -440,4 +468,202 @@ test('取消期间完成的临时上传不能再跳转外站，预开的标签�
   assert.equal(h.popups[0].closed, true);
   assert.equal(h.popups[0].href, undefined);
   assert.equal(h.current.states.google.status, 'idle');
+});
+
+test('选区按原图尺寸取整并约束边界，无效或零面积选区被拒绝', () => {
+  assert.deepEqual(cropPixels({ x: 0.125, y: 0.25, width: 0.5, height: 0.5 }, 800, 600), {
+    x: 100,
+    y: 150,
+    width: 400,
+    height: 300,
+  });
+  assert.deepEqual(cropPixels({ x: -0.1, y: 0.8, width: 1.2, height: 0.4 }, 100, 100), {
+    x: 0,
+    y: 80,
+    width: 100,
+    height: 20,
+  });
+  for (const rect of [
+    { x: 0, y: 0, width: 0, height: 1 },
+    { x: NaN, y: 0, width: 1, height: 1 },
+    { x: 2, y: 0, width: 1, height: 1 },
+    { x: 0, y: 0, width: 0.001, height: 1 },
+  ])
+    assert.throws(() => cropPixels(rect, 100, 100), /选区|框选/);
+});
+
+test('裁剪从原图像素提取，整图与大选区缩放至最长边 2000，小选区不放大', async (t) => {
+  const h = harness(t, { width: 4000, height: 3000 });
+  const file = new File(['image'], 'original.png', { type: 'image/png' });
+  const whole = await prepareImage(file);
+  assert.deepEqual(h.draws[0].slice(1), [0, 0, 4000, 3000, 0, 0, 2000, 1500]);
+  assert.equal(whole.file.name, 'original.jpg');
+  const cropped = await prepareImage(file, { x: 0.25, y: 0.5, width: 0.25, height: 0.25 });
+  assert.deepEqual(h.draws[1].slice(1), [1000, 1500, 1000, 750, 0, 0, 1000, 750]);
+  assert.equal(cropped.width, 1000);
+  assert.equal(cropped.height, 750);
+  assert.equal(cropped.file.type, 'image/jpeg');
+  assert.equal(cropped.file.name, 'original-crop.jpg');
+  await prepareImage(file, { x: 0.25, y: 0, width: 0.75, height: 1 });
+  assert.deepEqual(h.draws[2].slice(1), [1000, 0, 3000, 3000, 0, 0, 2000, 2000]);
+  assert.ok(h.bitmaps.every((bitmap) => bitmap.closed));
+});
+
+test('确认选区后内置、外部及重试均提交裁剪图，未搜索前不上传', async (t) => {
+  const h = harness(t, {
+    width: 800,
+    height: 600,
+    storage: new Map([['alltrace-browser-enabled', 'true']]),
+  });
+  await h.current.chooseFile(new File(['image'], 'original.png', { type: 'image/png' }));
+  h.render();
+  const original = h.current.image;
+  assert.equal(await h.current.applyCrop({ x: 0.25, y: 0, width: 0.5, height: 0.5 }), true);
+  h.render();
+  assert.equal(h.current.originalImage, original);
+  assert.equal(h.current.image.width, 400);
+  assert.equal(h.current.image.height, 300);
+  assert.ok(h.calls.every((call) => call.url === '/api/config'));
+  h.current.setSelected(['soutubot', 'google']);
+  h.render().beginSearch();
+  await h.settle();
+  const inline = h.calls.find((call) => call.url === '/api/search/soutubot');
+  const external = h.calls.find((call) => call.url === '/api/temp-image');
+  assert.equal(inline.init.body.get('image'), h.current.image.file);
+  assert.equal(external.init.body.get('image'), h.current.image.file);
+  assert.equal(inline.init.body.get('image_width'), '400');
+  assert.equal(inline.init.body.get('image_height'), '300');
+  h.current.retry('soutubot');
+  await h.settle();
+  assert.equal(h.calls.at(-1).init.body.get('image'), h.current.image.file);
+  h.current.restoreImage();
+  h.render();
+  assert.equal(h.current.image, original);
+  assert.equal(h.current.crop, null);
+  assert.equal(h.current.activeInput, null);
+});
+
+test('重复调整选区始终使用原文件，更换或移除图片清空旧选区', async (t) => {
+  const decoded = [];
+  const h = harness(t, {
+    decode: async (file) => {
+      decoded.push(file);
+      return { width: 800, height: 600, close() {} };
+    },
+  });
+  const file = new File(['image'], 'original.jpg', { type: 'image/jpeg' });
+  await h.current.chooseFile(file);
+  h.render();
+  await h.current.applyCrop({ x: 0, y: 0, width: 0.5, height: 0.5 });
+  h.render();
+  await h.current.applyCrop({ x: 0.5, y: 0.5, width: 0.5, height: 0.5 });
+  h.render();
+  assert.deepEqual(decoded, [file, file, file]);
+  await h.current.chooseFile(new File(['new image'], 'new.jpg', { type: 'image/jpeg' }));
+  h.render();
+  assert.equal(h.current.crop, null);
+  assert.equal(h.current.image, h.current.originalImage);
+  assert.equal(h.current.image.file.name, 'new.jpg');
+  h.current.clearImage();
+  h.render();
+  assert.equal(h.current.image, null);
+  assert.equal(h.current.originalImage, null);
+  assert.equal(await h.current.applyCrop({ x: 0, y: 0, width: 1, height: 1 }), false);
+});
+
+test('裁剪失败不覆盖当前图片，释放 bitmap 并恢复可操作状态', async (t) => {
+  const options = { width: 800, height: 600 };
+  const h = harness(t, options);
+  await h.current.chooseFile(new File(['image'], 'sample.jpg', { type: 'image/jpeg' }));
+  h.render();
+  const original = h.current.image;
+  options.blobFails = true;
+  assert.equal(await h.current.applyCrop({ x: 0, y: 0, width: 0.5, height: 0.5 }), false);
+  h.render();
+  assert.equal(h.current.image, original);
+  assert.equal(h.current.preparing, false);
+  assert.equal(h.current.crop, null);
+  assert.match(h.current.error, /读取失败/);
+  assert.ok(h.bitmaps.every((bitmap) => bitmap.closed));
+});
+
+test('裁剪尚未完成时不能发起搜索，移除图片后迟到的裁剪结果被丢弃', async (t) => {
+  let release;
+  const options = {};
+  const h = harness(t, options);
+  await h.current.chooseFile(new File(['image'], 'sample.jpg', { type: 'image/jpeg' }));
+  h.render();
+  options.decode = () =>
+    new Promise((resolve) => {
+      release = resolve;
+    });
+  const pending = h.current.applyCrop({ x: 0, y: 0, width: 0.5, height: 0.5 });
+  h.render().beginSearch();
+  assert.ok(h.calls.every((call) => call.url === '/api/config'));
+  h.current.clearImage();
+  const bitmap = {
+    width: 10,
+    height: 10,
+    closed: false,
+    close() {
+      this.closed = true;
+    },
+  };
+  release(bitmap);
+  assert.equal(await pending, false);
+  h.render();
+  assert.equal(h.current.image, null);
+  assert.equal(h.current.preparing, false);
+  assert.equal(bitmap.closed, true);
+});
+
+test('调整选区只释放旧裁剪预览，恢复整图不释放仍在使用的原图', async (t) => {
+  const created = [],
+    revoked = [];
+  t.mock.method(URL, 'createObjectURL', () => {
+    const url = `blob:crop-test-${created.length}`;
+    created.push(url);
+    return url;
+  });
+  t.mock.method(URL, 'revokeObjectURL', (url) => revoked.push(url));
+  const h = harness(t);
+  await h.current.chooseFile(new File(['image'], 'sample.jpg', { type: 'image/jpeg' }));
+  h.render();
+  const original = h.current.image.preview;
+  await h.current.applyCrop({ x: 0, y: 0, width: 0.5, height: 0.5 });
+  h.render();
+  const firstCrop = h.current.image.preview;
+  await h.current.applyCrop({ x: 0.5, y: 0.5, width: 0.5, height: 0.5 });
+  h.render();
+  assert.deepEqual(revoked, [firstCrop]);
+  h.current.restoreImage();
+  h.render();
+  assert.equal(h.current.image.preview, original);
+  assert.equal(revoked.includes(original), false);
+  assert.equal(revoked.length, 2);
+  h.current.clearImage();
+  h.render();
+  assert.deepEqual(new Set(revoked), new Set(created));
+});
+
+test('选区不影响图片链接模式，重新上传整图仍执行分辨率保护', async (t) => {
+  const options = {};
+  const h = harness(t, options);
+  await h.current.chooseFile(new File(['image'], 'sample.jpg', { type: 'image/jpeg' }));
+  h.render();
+  await h.current.applyCrop({ x: 0, y: 0, width: 0.5, height: 0.5 });
+  h.render();
+  h.urlSearch(['trace']);
+  await h.settle();
+  assert.equal(h.calls.at(-1).init.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(h.calls.at(-1).init.body), {
+    url: 'https://example.com/image.jpg?x=1&y=2',
+  });
+  options.width = 8000;
+  options.height = 8000;
+  await h.current.chooseFile(new File(['huge image'], 'huge.jpg', { type: 'image/jpeg' }));
+  h.render();
+  assert.match(h.current.error, /4000 万像素/);
+  assert.ok(h.bitmaps.every((bitmap) => bitmap.closed));
+  assert.equal(h.current.preparing, false);
 });
